@@ -42,5 +42,4 @@ class OilPriceScraper(object):
 if __name__ == '__main__':
     ops = OilPriceScraper()
     data = ops.generate_oil_data()
-    import ipdb
-    ipdb.set_trace()
+    
