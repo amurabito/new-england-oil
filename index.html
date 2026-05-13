@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NE Heating Oil Trends</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <style>
+        :root { --bg: #0f172a; --panel: #1e293b; --accent: #38bdf8; --text: #f1f5f9; --border: #334155; --winner: #fbbf24; }
+        body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 75%; } /* Enforced 75% width */
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        .controls { margin-bottom: 20px; display: flex; gap: 10px; background: #111827; padding: 15px; border-radius: 8px; }
+        .btn { background: #1e293b; border: 1px solid var(--border); color: #94a3b8; padding: 8px 16px; border-radius: 6px; cursor: pointer; transition: 0.2s; }
+        .btn.active { border-color: var(--accent); color: var(--accent); background: #0f172a; }
+        .badge-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .badge { background: var(--panel); border: 1px solid var(--border); padding: 15px; border-radius: 10px; text-decoration: none; color: inherit; transition: 0.2s; }
+        .badge:hover { border-color: var(--accent); transform: translateY(-2px); }
+        .badge strong { font-size: 1.4rem; display: block; margin: 5px 0; }
+        .badge small { color: #94a3b8; text-transform: uppercase; font-size: 0.7rem; font-weight: bold; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        h2 { font-size: 0.85rem; color: var(--accent); text-transform: uppercase; margin-top: 0; letter-spacing: 0.05rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 20px;">
+            <h1 style="margin:0">NE Heating Oil Trends</h1>
+            <div id="last-update" style="color: #94a3b8; font-size: 0.8rem;"></div>
+        </header>
+
+        <div class="controls" id="global-filters"></div>
+        <div id="badge-container" class="badge-grid"></div>
+
+        <div class="card">
+            <h2>Price Distribution & Market Average</h2>
+            <div style="height: 350px;"><canvas id="distChart"></canvas></div>
+        </div>
+
+        <div class="grid">
+            <div class="card"><h2>NH Best Value Leaderboard</h2><canvas id="nhLead"></canvas></div>
+            <div class="card"><h2>MA Best Value Leaderboard</h2><canvas id="maLead"></canvas></div>
+        </div>
+
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items: center;">
+                <h2>Full Vendor Price History</h2>
+                <div id="history-filters"></div>
+            </div>
+            <div style="height: 450px;"><canvas id="historyChart"></canvas></div>
+        </div>
+
+        <div class="card">
+            <h2>Market Trends (Zone Lows vs Average)</h2>
+            <div style="height: 350px;"><canvas id="trendChart"></canvas></div>
+        </div>
+    </div>
+
+<script>
+    const ZONES = [
+        { id: 'NH_Zone_2', name: 'NH Zone 2', state: 'NH', color: '#38bdf8' },
+        { id: 'NH_Zone_6', name: 'NH Zone 6', state: 'NH', color: '#a855f7' },
+        { id: 'MA_Zone_9', name: 'MA Zone 9', state: 'MA', color: '#f43f5e' }
+    ];
+    let activeZones = ZONES.map(z => z.id);
+    let histZone = ZONES[0].id;
+    let rawData = [];
+    let currentData = [];
+    let charts = {};
+
+    async function init() {
+        const [csvR, jsonR] = await Promise.all([fetch('data.csv'), fetch('vendors.json')]);
+        rawData = Papa.parse(await csvR.text(), { header: true, skipEmptyLines: true }).data;
+        currentData = await jsonR.json();
+        setupUI();
+        refresh();
+    }
+
+    function setupUI() {
+        const gFilter = document.getElementById('global-filters');
+        const hFilter = document.getElementById('history-filters');
+        ZONES.forEach(z => {
+            const b = document.createElement('button');
+            b.className = 'btn active'; b.innerText = z.name;
+            b.onclick = () => { b.classList.toggle('active'); updateActive(); };
+            gFilter.appendChild(b);
+
+            const hb = document.createElement('button');
+            hb.className = `btn ${z.id === histZone ? 'active' : ''}`; hb.innerText = z.name;
+            hb.onclick = () => { 
+                Array.from(hFilter.children).forEach(c => c.classList.remove('active')); 
+                hb.classList.add('active'); histZone = z.id; renderHistory(); 
+            };
+            hFilter.appendChild(hb);
+        });
+    }
+
+    function updateActive() {
+        const btns = document.getElementById('global-filters').children;
+        activeZones = Array.from(btns).filter(b => b.classList.contains('active')).map(b => ZONES.find(z => z.name === b.innerText).id);
+        refresh();
+    }
+
+    function refresh() {
+        const filtered = currentData.filter(v => activeZones.includes(v.zone)).sort((a,b) => a.price - b.price);
+        const avg = filtered.reduce((a, b) => a + b.price, 0) / (filtered.length || 1);
+
+        // Header Badges
+        let bHtml = '';
+        if(filtered[0]) bHtml += `<a href="${filtered[0].link}" target="_blank" class="badge" style="border-color: var(--winner)"><small style="color: var(--winner)">Best Value</small><strong>$${filtered[0].price.toFixed(3)}</strong><span>${filtered[0].name}</span></a>`;
+        ZONES.filter(z => activeZones.includes(z.id)).forEach(z => {
+            const low = currentData.filter(v => v.zone === z.id).sort((a,b) => a.price - b.price)[0];
+            if(low) bHtml += `<a href="${low.link}" target="_blank" class="badge"><small>${z.name} Low</small><strong>$${low.price.toFixed(3)}</strong><span>${low.name}</span></a>`;
+        });
+        document.getElementById('badge-container').innerHTML = bHtml;
+
+        // Price Distribution - RE-ENABLED CLICKS & FIXED AXIS
+        if(charts.dist) charts.dist.destroy();
+        charts.dist = new Chart(document.getElementById('distChart'), {
+            data: {
+                labels: filtered.map(v => v.name),
+                datasets: [
+                    { type: 'line', label: 'Average', data: filtered.map(() => avg), borderColor: '#fff', borderDash: [6,6], pointRadius: 0 },
+                    { type: 'bar', data: filtered.map(v => v.price), backgroundColor: filtered.map((v,i) => i < 5 ? '#10b981' : (v.price < avg ? '#fbbf24' : '#ef4444')) }
+                ]
+            },
+            options: { 
+                onClick: (e) => {
+                    const points = charts.dist.getElementsAtEventForMode(e, 'nearest', { intersect: true }, true);
+                    if (points.length) window.open(filtered[points[0].index].link, '_blank');
+                },
+                maintainAspectRatio: false, 
+                scales: { y: { beginAtZero: true } }, // Fixed misleading axis
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        renderLeaderboard('nhLead', 'NH');
+        renderLeaderboard('maLead', 'MA');
+        renderHistory();
+        renderTrends();
+        if(rawData.length > 0) document.getElementById('last-update').innerText = "Last Update: " + rawData[rawData.length-1].date;
+    }
+
+    function renderLeaderboard(id, state) {
+        const counts = {};
+        rawData.forEach(row => { if (row[state + '_winner'] && row[state + '_winner'] !== 'Unknown') counts[row[state + '_winner']] = (counts[row[state + '_winner']] || 0) + 1; });
+        const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,8);
+        if(charts[id]) charts[id].destroy();
+        charts[id] = new Chart(document.getElementById(id), {
+            type: 'bar', data: { labels: sorted.map(s => s[0]), datasets: [{ data: sorted.map(s => s[1]), backgroundColor: state === 'NH' ? '#38bdf8' : '#f43f5e' }] },
+            options: { indexAxis: 'y', plugins: { legend: { display: false } } }
+        });
+    }
+
+    function renderHistory() {
+        if(charts.hist) charts.hist.destroy();
+        const vendorMap = {};
+        rawData.forEach((row, idx) => {
+            try {
+                JSON.parse(row.full_data || "[]").filter(v => v.zone === histZone).forEach(v => {
+                    if(!vendorMap[v.name]) vendorMap[v.name] = new Array(rawData.length).fill(null);
+                    vendorMap[v.name][idx] = v.price;
+                });
+            } catch(e) {}
+        });
+        const datasets = Object.keys(vendorMap).map(name => ({ label: name, data: vendorMap[name], tension: 0.3, pointRadius: 3, spanGaps: true, borderColor: `hsl(${Math.abs(name.split('').reduce((a,b)=>a+b.charCodeAt(0),0)) % 360}, 70%, 60%)` }));
+        charts.hist = new Chart(document.getElementById('historyChart'), { type: 'line', data: { labels: rawData.map(r => r.date.split(' ')[0]), datasets }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, color: '#f1f5f9' } } } } });
+    }
+
+    function renderTrends() {
+        if(charts.trends) charts.trends.destroy();
+        const datasets = [{ label: 'Global Average', data: rawData.map(r => parseFloat(r.global_avg)), borderColor: '#fff', borderDash: [6,6], pointRadius: 0 }];
+        ZONES.filter(z => activeZones.includes(z.id)).forEach(z => {
+            datasets.push({ label: z.name, data: rawData.map(r => parseFloat(r[z.id + '_low'])), borderColor: z.color, pointRadius: 2, tension: 0.2 });
+        });
+        charts.trends = new Chart(document.getElementById('trendChart'), {
+            type: 'line', data: { labels: rawData.map(r => r.date.split(' ')[0]), datasets },
+            options: { maintainAspectRatio: false, scales: { y: { beginAtZero: false, grace: '5%' } }, plugins: { legend: { labels: { color: '#f1f5f9' } } } }
+        });
+    }
+
+    init();
+</script>
+</body>
+</html>
