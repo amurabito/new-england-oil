@@ -103,4 +103,29 @@ def scrape():
     ma_winner = min(ma_pool, key=lambda x: x['price'])['name'] if ma_pool else "Unknown"
 
     csv_row = {
-        "date
+        "date": current_time,
+        "global_avg": round(sum(v['price'] for v in all_vendors) / len(all_vendors), 3),
+        "NH_winner": nh_winner,
+        "MA_winner": ma_winner,
+        "NH_Zone_2_low": min([v['price'] for v in nh_pool if v['zone'] == 'NH_Zone_2'], default=""),
+        "NH_Zone_6_low": min([v['price'] for v in nh_pool if v['zone'] == 'NH_Zone_6'], default=""),
+        "MA_Zone_9_low": min([v['price'] for v in ma_pool if v['zone'] == 'MA_Zone_9'], default=""),
+        "full_data": json.dumps(all_vendors)
+    }
+
+    # Save current state for frontend immediate view
+    with open('vendors.json', 'w') as f:
+        json.dump(all_vendors, f)
+    
+    # Append to historical CSV
+    file_exists = os.path.isfile('data.csv')
+    with open('data.csv', 'a', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=csv_row.keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(csv_row)
+    
+    print(f"Scrape completed successfully at {current_time}")
+
+if __name__ == "__main__":
+    scrape()
